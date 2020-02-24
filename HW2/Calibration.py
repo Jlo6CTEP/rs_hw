@@ -18,9 +18,11 @@ from Helpers.helpers import R, jac
 L1 = 1
 MAX_Q2 = 5
 
-K1 = 73756.215
-K2 = 147512.429
-K3 = 368781.075
+K1 = 1/(1 * 10e6)
+K2 = 1/(2 * 10e6)
+K3 = 1/(0.5 * 10e6)
+
+KREAL = array([K1, K2, K3])
 
 L2 = 2
 MAX_Q3 = 3
@@ -57,7 +59,7 @@ def deflect(coord, force):
     return [dq1, dq2, dq3, 0, 0, dq1], loaded
 
 
-a = gen_points(3000)
+a = gen_points(300)
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
 ax.scatter(*a)
@@ -69,7 +71,7 @@ ax.set_zlabel('z, feet')
 j = jac(model)
 
 A = []
-W = array([500, 500, 500, 0, 0, 0])
+W = array([500, 500, 500, 500, 500, 500])
 for x in range(j.shape[1]):
     A.append(j[:, x] * j[:, x].T * Matrix([fx, fy, fz, rx, ry, rz]))
 A = BlockMatrix(A)
@@ -78,10 +80,12 @@ A = lambdify([q1, q2, q3, t1, t2, t3, fx, fy, fz, rx, ry, rz], A, 'numpy')
 A_A_T = None
 A_T = None
 for x in range(len(a[0])):
-    deflections, coords = deflect(a[:, x], W)
-    At = A(*coords, *deflections[:3], *W)
+    At = A(*a[:, x], 0, 0, 0, *W)
     A_A_T = A_A_T + At.T @ At if A_A_T is not None else At.T @ At
-    A_T = A_T + At.T @ deflections if A_T is not None else At.T @ deflections
+    A_T = A_T + At.T @ (At @ KREAL) if A_T is not None else At.T @ (At @ KREAL)
+
+
+print(A(1, 1, 1, 0, 0, 0, 100, 100, 100, 100, 100, 100) @ KREAL)
 
 print(inv(A_A_T) @ A_T)
 
