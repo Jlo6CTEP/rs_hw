@@ -2,7 +2,7 @@ from functools import reduce
 from operator import mul
 
 import numpy
-from numpy import arctan2, sqrt, pi, sin, cos, array, zeros, block, asarray, newaxis, hstack, vstack
+from numpy import arctan2, sqrt, pi, sin, cos, array, zeros, block, asarray, newaxis, hstack, vstack, full, linspace
 from numpy.linalg import pinv, inv
 from scipy.stats import truncnorm, randint, uniform
 
@@ -18,11 +18,11 @@ from Helpers.helpers import R, jac
 L1 = 1
 MAX_Q2 = 5
 
-K1 = 1/(1 * 10e6)
-K2 = 1/(2 * 10e6)
-K3 = 1/(0.5 * 10e6)
+K1 = 1 / 73756.215
+K2 = 1 / 147512.429
+K3 = 1 / 36781.075
 
-KREAL = array([K1, K2, K3])
+K_REAL = array([K1, K2, K3])
 
 L2 = 2
 MAX_Q3 = 3
@@ -31,13 +31,13 @@ MEAN_Z = 3.5
 MEAN_R = 7
 STD = 1
 
-q1, q2, q3, t1, t2, t3 = symbols('q1, q2, q3, t1, t2, t3')
+q1, q2, q3 = symbols('q1, q2, q3')
 fx, fy, fz, rx, ry, rz = symbols('fx, fy, fz, rx, ry, rz')
 
-model = [R('rz', -q1, is_diff=False), R('rz', t1), R('tz', L1, is_diff=False),
-         R('tz', q2, is_diff=False), R('tz', t2),
-         R('ty', L2, is_diff=False), R('ty', q3, is_diff=False), R('ty', t3)]
-fk = lambdify([q1, q2, q3, t1, t2, t3], reduce(mul, model).m, 'numpy')
+model = [R('rz', -q1, is_diff=False), R('rz', 0), R('tz', L1, is_diff=False),
+         R('tz', q2, is_diff=False), R('tz', 0),
+         R('ty', L2, is_diff=False), R('ty', q3, is_diff=False), R('ty', 0)]
+fk = lambdify([q1, q2, q3], reduce(mul, model).m, 'numpy')
 
 
 def ik(x, y, z):
@@ -52,11 +52,12 @@ def gen_points(n):
     return asarray([x, y, z], dtype=numpy.float64)
 
 
-def deflect(coord, force):
-    angles = ik(*coord)
-    dq1, dq3, dq2 = force[:3] / array([K1, K2, K3]) * array([L2 + angles[2], 1, 1])
-    loaded = fk(*angles, dq1, dq2, dq3)[:3, 3]
-    return [dq1, dq2, dq3, 0, 0, dq1], loaded
+def gen_circle(n):
+    z = full([n], L1 + MAX_Q2/2)
+    angle = linspace(0, 2*pi, n)
+    r = L2 + MAX_Q3/2
+    x, y = sin(angle) * r, cos(angle) * r
+    return asarray([x, y, z, zeros(n), zeros(n), angle], dtype=numpy.float64).T
 
 
 a = gen_points(300)
@@ -66,7 +67,8 @@ ax.scatter(*a)
 ax.set_xlabel('x, feet')
 ax.set_ylabel('y, feet')
 ax.set_zlabel('z, feet')
-#plt.show()
+ax.legend()
+plt.show()
 
 j = jac(model)
 
@@ -75,17 +77,43 @@ W = array([500, 500, 500, 500, 500, 500])
 for x in range(j.shape[1]):
     A.append(j[:, x] * j[:, x].T * Matrix([fx, fy, fz, rx, ry, rz]))
 A = BlockMatrix(A)
-A = lambdify([q1, q2, q3, t1, t2, t3, fx, fy, fz, rx, ry, rz], A, 'numpy')
+A = lambdify([q1, q2, q3, fx, fy, fz, rx, ry, rz], A, 'numpy')
 
 A_A_T = None
 A_T = None
 for x in range(len(a[0])):
-    At = A(*a[:, x], 0, 0, 0, *W)
+    At = A(*a[:, x], *W)
     A_A_T = A_A_T + At.T @ At if A_A_T is not None else At.T @ At
-    A_T = A_T + At.T @ (At @ KREAL) if A_T is not None else At.T @ (At @ KREAL)
+    A_T = A_T + At.T @ (At @ K_REAL) if A_T is not None else At.T @ (At @ K_REAL)
 
+k = inv(A_A_T) @ A_T
 
-print(A(1, 1, 1, 0, 0, 0, 100, 100, 100, 100, 100, 100) @ KREAL)
+non_cal = A(1, 1, 1, *W) @ K_REAL
+cal = fk(1, 1, 1)
 
-print(inv(A_A_T) @ A_T)
+circle = gen_circle(100)
+obtained = []
+calibrated = []
+
+for x in circle:
+    dx = A(*x[:3], *W) @ K_REAL
+    obtained.append(dx + x)
+    calibrated.append(A(*(x - dx)[:3], *W) @ k + (x - dx))
+
+obtained = vstack(obtained).T
+calibrated = vstack(calibrated).T
+
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+ax.plot(*circle.T[:3], c="blue", label="desired")
+ax.plot(*obtained[:3], c="red", label="obtained")
+ax.plot(*calibrated[:3], c="green", label="calibrated")
+ax.set_xlabel('x, feet')
+ax.set_ylabel('y, feet')
+ax.set_zlabel('z, feet')
+ax.set_zlim(2, 5)
+ax.legend()
+plt.show()
+print("Given", 1/K_REAL)
+print("Estimated", 1/k)
 
